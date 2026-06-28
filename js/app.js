@@ -301,9 +301,13 @@ function florCardHtml(nombre, state, showPrecio) {
     </div>`;
 }
 
-function renderFloresGrid(containerId, stateMap, showPrecio) {
+function renderFloresGrid(containerId, stateMap, showPrecio, flores = floresUnicas) {
   const el = document.getElementById(containerId);
-  el.innerHTML = floresUnicas.map(nombre => {
+  if (flores.length === 0) {
+    el.innerHTML = '<p class="lista-cargando">Sin resultados</p>';
+    return;
+  }
+  el.innerHTML = flores.map(nombre => {
     const state = stateMap.get(nombre) || { qty: 0, colorIdx: 0, tamanioIdx: 0, precio: '' };
     return florCardHtml(nombre, state, showPrecio);
   }).join('');
@@ -467,9 +471,19 @@ function renderPedidoLista() {
 
 // ===== PANTALLA: CREAR STOCK =====
 
+function renderStockGrid() {
+  const filtro = (document.getElementById('input-buscar-stock')?.value || '').toLowerCase().trim();
+  const flores = filtro
+    ? floresUnicas.filter(n => n.toLowerCase().includes(filtro))
+    : floresUnicas;
+  renderFloresGrid('grid-stock', stockState, true, flores);
+}
+
 async function iniciarCrearStock() {
   await asegurarProductos();
-  renderFloresGrid('grid-stock', stockState, true);
+  const buscador = document.getElementById('input-buscar-stock');
+  if (buscador) { buscador.value = ''; buscador.oninput = () => renderStockGrid(); }
+  renderStockGrid();
   actualizarResumen('stock-resumen', stockState);
 }
 
