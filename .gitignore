@@ -1,0 +1,4 @@
+.vercel
+node_modules/
+credentials.txt
+client_secret_*.json

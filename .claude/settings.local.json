@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx serve *)",
+      "Bash(netstat -ano)",
+      "Bash(node *)",
+      "Bash(npx --yes xlsx-to-csv STOCK_FLORERIA_v2.xlsx)",
+      "Bash(npm install *)",
+      "Skill(run)",
+      "PowerShell(Start-Process \"C:\\\\Users\\\\Bruno\\\\Desktop\\\\proyecto bruna\\\\index.html\")",
+      "PowerShell(Start-Process \"http://localhost:8080\")",
+      "PowerShell(Start-Process \"http://localhost:5500\")",
+      "PowerShell(netstat *)",
+      "PowerShell(vercel *)"
+    ]
+  }
+}
