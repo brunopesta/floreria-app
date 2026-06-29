@@ -33,7 +33,11 @@
 <div id="pantalla-menu" class="pantalla">
   <header class="cabecera">
     <h1>🌸 Flores</h1>
-    <button id="btn-salir" class="btn-cabecera-txt">Salir</button>
+    <div class="perfil-acceso">
+      <img id="perfil-foto" class="perfil-foto" src="" alt=""
+        onerror="this.style.display='none'">
+      <button id="btn-salir" class="btn-cabecera-txt">Salir</button>
+    </div>
   </header>
   <main class="menu-cuerpo">
     <div class="menu-grilla">
@@ -78,9 +82,9 @@
       placeholder="Buscar flor..." autocomplete="off" autocorrect="off">
   </div>
 
-  <div class="grid-scroll">
-    <div id="grid-stock" class="flor-grid">
-      <div class="grid-cargando">Cargando flores...</div>
+  <div class="lista-scroll">
+    <div id="lista-stock" class="flor-lista">
+      <div class="lista-cargando">Cargando flores...</div>
     </div>
   </div>
 

@@ -149,27 +149,74 @@ document.querySelectorAll('[data-ir]').forEach(btn => {
   btn.addEventListener('click', () => irA(btn.dataset.ir));
 });
 
+// ===== SESIÓN PERSISTENTE =====
+
+function saveSession(info) {
+  localStorage.setItem('flores_sesion', JSON.stringify(info));
+  localStorage.setItem('flores_logueado', '1');
+}
+
+function getSavedSession() {
+  try { return JSON.parse(localStorage.getItem('flores_sesion')); } catch { return null; }
+}
+
+function clearSession() {
+  localStorage.removeItem('flores_sesion');
+  localStorage.removeItem('flores_logueado');
+}
+
+async function fetchUserProfile(token) {
+  try {
+    const r = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return { nombre: d.name || '', email: d.email || '', foto: d.picture || '' };
+  } catch { return null; }
+}
+
+function actualizarPerfilMenu() {
+  const s = getSavedSession();
+  if (!s || !s.foto) return;
+  const el = document.getElementById('perfil-foto');
+  if (el) { el.src = s.foto; el.style.display = 'inline-block'; }
+}
+
 // ===== AUTENTICACIÓN =====
 
 function initAuth() {
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CONFIG.CLIENT_ID,
     scope:     CONFIG.SCOPES,
-    callback:  resp => {
+    callback:  async resp => {
       if (resp.error) {
-        if (resp.error !== 'user_logged_out' && resp.error !== 'access_denied' && resp.error !== 'popup_closed_by_user') {
+        if (resp.error === 'user_logged_out' || resp.error === 'access_denied') {
+          clearSession();
+        } else if (resp.error !== 'popup_closed_by_user') {
           toast('No se pudo iniciar sesión.', true);
         }
+        irA('login');
         return;
       }
       setAccessToken(resp.access_token);
-      localStorage.setItem('flores_logueado', '1');
-      irA('menu');
+
+      // Primera vez: intentar guardar perfil (best-effort, sin scope extra)
+      if (!getSavedSession()) {
+        const perfil = await fetchUserProfile(resp.access_token);
+        saveSession(perfil || { logueado: true });
+      }
+
+      // Siempre: mostrar foto si la tenemos y abrir menú
+      actualizarPerfilMenu();
+      if (!document.getElementById('pantalla-menu').classList.contains('activa')) {
+        irA('menu');
+      }
     }
   });
 
-  // Si ya se logueó antes, intenta entrar automáticamente sin mostrar nada
-  if (localStorage.getItem('flores_logueado')) {
+  // Sesión guardada o flag viejo → pedir token silencioso (menú abre en el callback)
+  if (getSavedSession() || localStorage.getItem('flores_logueado')) {
     tokenClient.requestAccessToken({ prompt: '' });
   }
 }
@@ -183,7 +230,7 @@ document.getElementById('btn-salir').addEventListener('click', () => {
   const t = getAccessToken();
   if (t) google.accounts.oauth2.revoke(t, () => {});
   setAccessToken(null);
-  localStorage.removeItem('flores_logueado');
+  clearSession();
   productos = [];
   floresUnicas = [];
   tamaniosPorFlor = {};
@@ -197,8 +244,13 @@ document.getElementById('btn-salir').addEventListener('click', () => {
 });
 
 document.addEventListener('auth:expired', () => {
-  toast('Sesión expirada. Iniciá sesión de nuevo.', true);
-  setTimeout(() => irA('login'), 1500);
+  // Intentar renovar el token silenciosamente antes de mandar al login
+  if (tokenClient && getSavedSession()) {
+    tokenClient.requestAccessToken({ prompt: '' });
+  } else {
+    toast('Sesión expirada. Iniciá sesión de nuevo.', true);
+    setTimeout(() => irA('login'), 1500);
+  }
 });
 
 // ===== CARGA DE PRODUCTOS =====
@@ -303,6 +355,7 @@ function florCardHtml(nombre, state, showPrecio) {
 
 function renderFloresGrid(containerId, stateMap, showPrecio, flores = floresUnicas) {
   const el = document.getElementById(containerId);
+  if (!el) return;
   if (flores.length === 0) {
     el.innerHTML = '<p class="lista-cargando">Sin resultados</p>';
     return;
@@ -428,6 +481,51 @@ function bindFloresGrid(containerId, stateMap, resumenFn) {
   });
 }
 
+// ===== LISTA COMPACTA STOCK =====
+
+function florRowStockHtml(nombre, state) {
+  const color  = COLORES[state.colorIdx] || COLORES[0];
+  const tams   = tamaniosPorFlor[nombre] || [];
+  const hasTam = tams.length > 1;
+  const tam    = hasTam ? (tams[state.tamanioIdx] || tams[0]) : null;
+  const activa = state.qty > 0 ? 'activa' : '';
+  return `
+    <div class="flor-row flor-row-stock ${activa}" data-nombre="${nombre}">
+      <div class="flor-row-top">
+        <span class="flor-row-nombre">${nombre}</span>
+        <div class="flor-row-color card-color-selector">
+          <button class="btn-prev-color" data-nombre="${nombre}">‹</button>
+          <div class="selector-valor">
+            ${colorDotHtml(color)}
+            <span class="color-nombre">${color.nombre}</span>
+          </div>
+          <button class="btn-next-color" data-nombre="${nombre}">›</button>
+        </div>
+        <div class="card-contador">
+          <button class="btn-menos" data-nombre="${nombre}">−</button>
+          <span class="card-num">${state.qty}</span>
+          <button class="btn-mas"  data-nombre="${nombre}">+</button>
+        </div>
+      </div>
+      <div class="flor-row-bottom">
+        ${hasTam ? `
+        <div class="card-selector card-tam-selector">
+          <button class="btn-prev-tam" data-nombre="${nombre}">‹</button>
+          <div class="selector-valor">
+            <span class="tam-nombre">${tam}</span>
+          </div>
+          <button class="btn-next-tam" data-nombre="${nombre}">›</button>
+        </div>` : '<div></div>'}
+        <div class="card-precio-wrap">
+          <span class="card-precio-simbolo">$</span>
+          <input type="number" class="card-precio" data-nombre="${nombre}"
+            value="${state.precio}" placeholder="precio"
+            min="0" step="0.01" inputmode="decimal">
+        </div>
+      </div>
+    </div>`;
+}
+
 // ===== LISTA COMPACTA PEDIDO =====
 
 function florRowHtml(nombre, state) {
@@ -472,11 +570,21 @@ function renderPedidoLista() {
 // ===== PANTALLA: CREAR STOCK =====
 
 function renderStockGrid() {
+  const el     = document.getElementById('lista-stock');
+  if (!el) return;
   const filtro = (document.getElementById('input-buscar-stock')?.value || '').toLowerCase().trim();
   const flores = filtro
     ? floresUnicas.filter(n => n.toLowerCase().includes(filtro))
     : floresUnicas;
-  renderFloresGrid('grid-stock', stockState, true, flores);
+
+  if (flores.length === 0) {
+    el.innerHTML = '<p class="lista-cargando">Sin resultados</p>';
+    return;
+  }
+  el.innerHTML = flores.map(nombre => {
+    const state = stockState.get(nombre) || { qty: 0, colorIdx: 0, tamanioIdx: 0, precio: '' };
+    return florRowStockHtml(nombre, state);
+  }).join('');
 }
 
 async function iniciarCrearStock() {
@@ -505,15 +613,12 @@ document.getElementById('btn-guardar-stock').addEventListener('click', async () 
 
   if (filas.length === 0) return toast('Agregá al menos una flor con cantidad > 0', true);
 
-  const sinPrecio = filas.filter(f => f[6] === 0).length;
-  if (sinPrecio > 0) return toast(`${sinPrecio} flor${sinPrecio > 1 ? 'es sin' : ' sin'} precio — completalo antes de guardar.`, true);
-
   try {
     showOverlay('Guardando compra...');
     await appendCompras(filas);
     toast(`✓ Compra guardada — ${filas.length} flor${filas.length > 1 ? 'es' : ''}`);
     floresUnicas.forEach(n => stockState.set(n, { qty: 0, colorIdx: 0, tamanioIdx: 0, precio: '' }));
-    renderFloresGrid('grid-stock', stockState, true);
+    renderStockGrid();
     actualizarResumen('stock-resumen', stockState);
   } catch (e) {
     toast('Error al guardar: ' + e.message, true);
@@ -538,10 +643,11 @@ async function cargarVerStock() {
     const mapa = {};
     semC.forEach(c => {
       const k = `${c.producto}|||${c.color}|||${c.tamanio}`;
-      if (!mapa[k]) mapa[k] = { producto: c.producto, color: c.color, tamanio: c.tamanio, comprado: 0, pedido: 0, totalPagado: 0, rowIndices: [], pedidoRowIndices: [] };
+      if (!mapa[k]) mapa[k] = { producto: c.producto, color: c.color, tamanio: c.tamanio, comprado: 0, pedido: 0, totalPagado: 0, rowIndices: [], rows: [], pedidoRowIndices: [] };
       mapa[k].comprado    += c.cantidad;
       mapa[k].totalPagado += c.total;
       mapa[k].rowIndices.push(c.rowIndex);
+      mapa[k].rows.push({ rowIndex: c.rowIndex, cantidad: c.cantidad });
     });
     semP.forEach(p => {
       const k = `${p.producto}|||${p.color}|||${p.tamanio}`;
@@ -582,6 +688,12 @@ async function cargarVerStock() {
            <span class="card-foto-fb" style="display:none;width:44px;height:44px;font-size:18px">${inicial}</span>`
         : `<span class="card-foto-fb" style="width:44px;height:44px;font-size:18px">${inicial}</span>`;
 
+      const precioPromedio = item.comprado > 0 && item.totalPagado > 0
+        ? +(item.totalPagado / item.comprado).toFixed(2)
+        : 0;
+      const precioStr  = precioPromedio > 0 ? precioPromedio.toFixed(2).replace('.', ',') : '—';
+      const rowsData   = item.rows.map(r => `${r.rowIndex}:${r.cantidad}`).join(',');
+
       html += `
         <div class="stock-card">
           <div class="stock-card-foto"><div class="card-foto-wrap" style="width:44px;height:44px">${foto}</div></div>
@@ -591,6 +703,17 @@ async function cargarVerStock() {
             <div class="stock-linea">✅ Compré: <strong>${item.comprado}</strong></div>
             <div class="stock-linea">📋 Pedidos: <strong>${item.pedido}</strong></div>
             ${resultHtml}
+            <div class="stock-precio-fila">
+              <span class="stock-precio-label">💲 Precio: <strong class="stock-precio-val">$${precioStr}</strong></span>
+              <button class="btn-editar-precio">Editar</button>
+            </div>
+            <div class="stock-precio-edit-fila" style="display:none">
+              <input type="number" class="stock-precio-input"
+                value="${precioPromedio || ''}" placeholder="0,00"
+                min="0" step="0.01" inputmode="decimal"
+                data-rows="${rowsData}">
+              <button class="btn-ok-precio">✓ OK</button>
+            </div>
             <button class="btn-eliminar-stock"
               data-rows="${item.rowIndices.join(',')}"
               data-pedido-rows="${item.pedidoRowIndices.join(',')}">✕ Eliminar</button>
@@ -631,6 +754,52 @@ async function cargarVerStock() {
           btn.disabled = false;
         } finally {
           hideOverlay();
+        }
+      });
+    });
+
+    // Editar precio
+    el.querySelectorAll('.btn-editar-precio').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const fila     = btn.closest('.stock-precio-fila');
+        const editFila = fila.nextElementSibling;
+        fila.style.display     = 'none';
+        editFila.style.display = 'flex';
+        editFila.querySelector('.stock-precio-input').select();
+      });
+    });
+
+    el.querySelectorAll('.btn-ok-precio').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const editFila    = btn.closest('.stock-precio-edit-fila');
+        const input       = editFila.querySelector('.stock-precio-input');
+        const nuevoPrecio = parseFloat(input.value) || 0;
+        const rows        = input.dataset.rows.split(',').filter(Boolean).map(r => {
+          const [rowIndex, cantidad] = r.split(':').map(Number);
+          return { rowIndex, cantidad };
+        });
+
+        btn.disabled = true;
+        showOverlay('Guardando precio...');
+        try {
+          await Promise.all(rows.map(({ rowIndex, cantidad }) =>
+            sheetsUpdate(
+              `${CONFIG.SHEETS.COMPRAS}!G${rowIndex}:H${rowIndex}`,
+              [[nuevoPrecio, +(cantidad * nuevoPrecio).toFixed(2)]]
+            )
+          ));
+          _balanceData = null;
+          const precioFila = editFila.previousElementSibling;
+          precioFila.querySelector('.stock-precio-val').textContent =
+            `$${nuevoPrecio.toFixed(2).replace('.', ',')}`;
+          editFila.style.display     = 'none';
+          precioFila.style.display   = 'flex';
+          toast('✓ Precio guardado');
+        } catch (e) {
+          toast('Error: ' + e.message, true);
+        } finally {
+          hideOverlay();
+          btn.disabled = false;
         }
       });
     });
@@ -1189,7 +1358,7 @@ async function cargarEstadisticas() {
 
 // ===== INIT =====
 window.addEventListener('load', () => {
-  bindFloresGrid('grid-stock',  stockState,  () => actualizarResumen('stock-resumen', stockState));
+  bindFloresGrid('lista-stock', stockState,  () => actualizarResumen('stock-resumen', stockState));
   bindFloresGrid('lista-pedido', pedidoState, actualizarResumenPedido);
 
   document.getElementById('input-precio-venta').addEventListener('input', actualizarResumenPedido);
